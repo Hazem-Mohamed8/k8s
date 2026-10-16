@@ -1,0 +1,46 @@
+pipeline {
+    agent any
+
+    environment {
+        APP_NAME   = 'k8s-python-app'
+        KUBECONFIG = '/var/jenkins_home/.kube/config'
+    }
+
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build -t ${APP_NAME}:${BUILD_NUMBER} .'
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials',
+                                                  usernameVariable: 'DOCKER_USERNAME',
+                                                  passwordVariable: 'DOCKER_PASSWORD')]) {
+                    sh '''
+                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+                        docker tag ${APP_NAME}:${BUILD_NUMBER} $DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}
+                        docker push $DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials',
+                                                  usernameVariable: 'DOCKER_USERNAME',
+                                                  passwordVariable: 'DOCKER_PASSWORD')]) {
+                    sh '''
+                        sed "s|IMAGE_PLACEHOLDER|$DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}|g" k8s/deployment.yaml > deployment.yaml
+                        kubectl apply -f deployment.yaml
+                        kubectl apply -f k8s/service.yaml
+                        kubectl rollout status deployment/python-app-deployment --timeout=120s
+                        kubectl get pods,svc
+                    '''
+                }
+            }
+        }
+    }
+}
