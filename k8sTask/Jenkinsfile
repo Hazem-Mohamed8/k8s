@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -15,32 +16,54 @@ pipeline {
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials',
-                                                  usernameVariable: 'DOCKER_USERNAME',
-                                                  passwordVariable: 'DOCKER_PASSWORD')]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
                     sh '''
-                        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
-                        docker tag ${APP_NAME}:${BUILD_NUMBER} $DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}
-                        docker push $DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}
+                        set -e
+
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            -u "$DOCKER_USERNAME" --password-stdin
+
+                        docker tag "${APP_NAME}:${BUILD_NUMBER}" \
+                            "${DOCKER_USERNAME}/${APP_NAME}:${BUILD_NUMBER}"
+
+                        docker push \
+                            "${DOCKER_USERNAME}/${APP_NAME}:${BUILD_NUMBER}"
                     '''
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Find Kubernetes YAML Files') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials',
-                                                  usernameVariable: 'DOCKER_USERNAME',
-                                                  passwordVariable: 'DOCKER_PASSWORD')]) {
-                    sh '''
-                        sed "s|IMAGE_PLACEHOLDER|$DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}|g" k8s/deployment.yaml > deployment.yaml
-                        kubectl apply -f deployment.yaml
-                        kubectl apply -f k8s/service.yaml
-                        kubectl rollout status deployment/python-app-deployment --timeout=120s
-                        kubectl get pods,svc
-                    '''
-                }
+                sh '''
+                    echo "===== WORKSPACE ====="
+                    pwd
+
+                    echo "===== PROJECT FILES ====="
+                    find . -maxdepth 6 -type f | sort
+
+                    echo "===== DEPLOYMENT FILES ====="
+                    find . -type f -name 'deployment.yaml' -print
+
+                    echo "===== SERVICE FILES ====="
+                    find . -type f -name 'service.yaml' -print
+                '''
             }
+        }
+    }
+
+    post {
+        success {
+            echo 'Build, Push, and file discovery completed.'
+        }
+        failure {
+            echo 'Pipeline failed. Check the Console Output for the error.'
         }
     }
 }
